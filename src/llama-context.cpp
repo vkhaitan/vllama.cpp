@@ -8,6 +8,7 @@
 #include "llama-memory.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
+#include "llama-moe-stats.h"
 #include "llama-ext.h"
 #include "llama.h"
 
@@ -20,6 +21,47 @@
 //
 // llama_context
 //
+
+static bool llama_moe_eval_callback(struct ggml_tensor * t, bool ask, void * user_data) {
+    auto * wrapper = static_cast<llama_moe_cb_wrapper *>(user_data);
+    llama_context * ctx = wrapper->ctx;
+
+    if (ask) {
+        // Check if this is an ffn_moe_topk tensor we're interested in
+        if (ctx->moe_stats.enabled && strncmp(t->name, "ffn_moe_topk-", 13) == 0) {
+            return true;  // We want the data
+        }
+        // Forward to user callback if set
+        if (wrapper->user_cb) {
+            return wrapper->user_cb(t, ask, wrapper->user_cb_data);
+        }
+        return false;
+    }
+
+    // Process ffn_moe_topk tensors for MoE stats
+    if (ctx->moe_stats.enabled && strncmp(t->name, "ffn_moe_topk-", 13) == 0) {
+        // Parse layer index from tensor name (e.g., "ffn_moe_topk-15")
+        int il = atoi(t->name + 13);
+
+        // Tensor shape is [n_expert_used, n_tokens]
+        const int64_t n_expert_used = t->ne[0];
+        const int64_t n_tokens = t->ne[1];
+
+        // Get tensor data (copy from device if needed)
+        std::vector<int32_t> expert_ids(n_expert_used * n_tokens);
+        ggml_backend_tensor_get(t, expert_ids.data(), 0, expert_ids.size() * sizeof(int32_t));
+
+        // Record expert usage
+        llama_moe_stats_record(ctx->moe_stats, expert_ids.data(), n_expert_used, n_tokens, il);
+    }
+
+    // Forward to user callback if set
+    if (wrapper->user_cb) {
+        return wrapper->user_cb(t, ask, wrapper->user_cb_data);
+    }
+
+    return true;
+}
 
 llama_context::llama_context(
         const llama_model & model,
@@ -176,6 +218,9 @@ llama_context::llama_context(
             LLAMA_LOG_WARN("%s: graph reuse disabled\n", __func__);
         }
     }
+
+    // Initialize MoE expert statistics tracking
+    llama_moe_stats_init(moe_stats, hparams.n_layer, hparams.n_expert);
 
     // ref: https://github.com/ggml-org/llama.cpp/pull/17046#discussion_r2503085732
     cparams.n_ctx = GGML_PAD(cparams.n_ctx, 256);
@@ -367,6 +412,9 @@ llama_context::llama_context(
 }
 
 llama_context::~llama_context() {
+    // Print MoE expert statistics if enabled
+    llama_moe_stats_print(moe_stats);
+
     if (!model.hparams.no_alloc) {
         for (size_t i = 0; i < backend_ptrs.size(); ++i) {
             ggml_backend_t             backend = backend_ptrs[i];
@@ -1197,7 +1245,16 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         res->reset();
 
         ggml_backend_sched_reset(sched.get());
-        ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+
+        // Set up eval callback - use MoE wrapper if MoE stats are enabled
+        if (moe_stats.enabled) {
+            moe_cb_wrapper.ctx = this;
+            moe_cb_wrapper.user_cb = cparams.cb_eval;
+            moe_cb_wrapper.user_cb_data = cparams.cb_eval_user_data;
+            ggml_backend_sched_set_eval_callback(sched.get(), llama_moe_eval_callback, &moe_cb_wrapper);
+        } else {
+            ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+        }
 
         //const auto t_start_us = ggml_time_us();
 

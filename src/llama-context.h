@@ -5,6 +5,7 @@
 #include "llama-cparams.h"
 #include "llama-graph.h"
 #include "llama-adapter.h"
+#include "llama-moe-stats.h"
 #include "llama-impl.h"
 
 #include "ggml-cpp.h"
@@ -18,6 +19,13 @@ class llama_batch_allocr;
 
 class llama_io_read_i;
 class llama_io_write_i;
+
+// MoE callback wrapper for capturing ffn_moe_topk tensors
+struct llama_moe_cb_wrapper {
+    struct llama_context * ctx = nullptr;
+    ggml_backend_sched_eval_callback user_cb = nullptr;
+    void * user_cb_data = nullptr;
+};
 
 // "memory" as in abstract memory for the context
 struct llama_memory_i;
@@ -351,6 +359,13 @@ private:
 
     // env: LLAMA_GRAPH_REUSE_DISABLE
     bool graph_reuse_disable = false;
+
+public:
+    // MoE expert statistics (env: LLAMA_MOE_EXPERT_STATS)
+    // note: public for access from static callback function
+    llama_moe_stats moe_stats;
+    llama_moe_cb_wrapper moe_cb_wrapper;
+private:
 
     // perf
     mutable int64_t t_start_us  = 0;
