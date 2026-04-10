@@ -1,0 +1,128 @@
+name: Build (macOS Monterey - Ivy Bridge - Vulkan)
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '**/CMakeLists.txt'
+      - '**/cmake/**'
+      - '**.h'
+      - '**.hpp'
+      - '**.c'
+      - '**.cpp'
+      - '**.m'
+      - '**.metal'
+      - '**.cu'
+      - '**.comp'
+      - '.github/workflows/macos-monterey-ivybridge-vulkan.yml'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - master
+    paths:
+      - '**/CMakeLists.txt'
+      - '**/cmake/**'
+      - '**.h'
+      - '**.hpp'
+      - '**.c'
+      - '**.cpp'
+      - '.github/workflows/macos-monterey-ivybridge-vulkan.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  macos-monterey-build:
+    name: macOS Monterey (Ivy Bridge, Vulkan)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache Vulkan SDK
+        uses: actions/cache@v4
+        id: cache-vulkan
+        with:
+          path: ~/vulkan-sdk
+          key: vulkan-sdk-1.4.341.1-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install Vulkan SDK
+        if: steps.cache-vulkan.outputs.cache-hit != 'true'
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.341.1
+          cache: false # We handle caching manually now
+
+      - name: Setup Vulkan Environment
+        run: |
+          if [ -z "$VULKAN_SDK" ]; then
+            export VULKAN_SDK=$HOME/vulkan-sdk/1.4.341.1/macOS
+          fi
+          echo "VULKAN_SDK=$VULKAN_SDK" >> $GITHUB_ENV
+          echo "$VULKAN_SDK/bin" >> $GITHUB_PATH
+          echo "DYLD_LIBRARY_PATH=$VULKAN_SDK/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "VK_ICD_FILENAMES=$VULKAN_SDK/share/vulkan/icd.d/MoltenVK_icd.json" >> $GITHUB_ENV
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-vulkan-ivybridge-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-vulkan-ivybridge-
+          max-size: 1G
+          create-symlink: true
+          save: true
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DGGML_NATIVE=OFF \
+            -DGGML_BMI2=OFF \
+            -DGGML_BMI1=OFF \
+            -DGGML_AVX=ON \
+            -DGGML_AVX2=OFF \
+            -DGGML_AVX512=OFF \
+            -DGGML_FMA=OFF \
+            -DGGML_F16C=ON \
+            -DGGML_METAL=OFF \
+            -DGGML_VULKAN=ON \
+            -DGGML_BLAS=OFF \
+            -DLLAMA_OPENSSL=OFF
+
+      - name: Build project
+        run: |
+          cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifact/bin
+          # Copy executables from build/bin, preserving symlinks
+          if [ -d "build/bin" ]; then
+            cp -avP build/bin/* artifact/bin/
+            rm -f artifact/bin/*.dylib
+          fi
+
+          mkdir -p artifact/lib
+          # Copy static libraries
+          find build/ -name "*.a" -exec cp -avP {} artifact/lib/ \;
+
+          # Copy shared libraries if any, preserving symlinks
+          find build/ -name "*.dylib" -exec cp -avP {} artifact/lib/ \;
+
+      - name: Create Tarball
+        run: |
+          tar -cvzf llama-macos-monterey-vulkan.tar.gz -C artifact .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-macos-monterey-ivybridge-vulkan
+          path: llama-macos-monterey-vulkan.tar.gz
