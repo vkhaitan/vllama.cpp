@@ -72,8 +72,8 @@ jobs:
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1
         with:
-          key: ${{ runner.os }}-${{ runner.arch }}-vulkan-ivybridge-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-vulkan-ivybridge-
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-vulkan-ivybridge-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-vulkan-ivybridge-
           max-size: 1G
           create-symlink: true
           save: true
