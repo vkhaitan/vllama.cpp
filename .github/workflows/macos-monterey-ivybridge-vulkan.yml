@@ -84,6 +84,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DCMAKE_INSTALL_RPATH="@loader_path/../lib" \
             -DGGML_NATIVE=OFF \
             -DGGML_BMI2=OFF \
             -DGGML_BMI1=OFF \
@@ -103,8 +104,24 @@ jobs:
 
       - name: Prepare artifacts
         run: |
-          # Use CMake's built-in install logic to create a proper distribution layout
+          # Use CMake's built-in install logic
           cmake --install build --prefix artifact
+          
+          # Create a helper install script
+          cat <<'EOF' > artifact/install.sh
+#!/bin/bash
+set -e
+SUDO=""
+[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+DEST="/usr/local"
+echo "Installing llama.cpp to $DEST..."
+$SUDO mkdir -p $DEST/bin $DEST/lib $DEST/include
+$SUDO cp -avP bin/* $DEST/bin/
+$SUDO cp -avP lib/* $DEST/lib/
+[ -d include ] && $SUDO cp -avP include/* $DEST/include/
+echo "Successfully installed to $DEST"
+EOF
+          chmod +x artifact/install.sh
 
       - name: Create Tarball
         run: |
