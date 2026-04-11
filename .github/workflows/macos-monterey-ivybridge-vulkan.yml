@@ -111,10 +111,12 @@ jobs:
           cat <<'EOF' > artifact/install.sh
           #!/bin/bash
           set -e
-          SUDO=""
-          [ "$(id -u)" -ne 0 ] && SUDO="sudo"
           DEST="/usr/local"
-          echo "Installing llama.cpp to $DEST..."
+          SUDO=""
+          #if [ ! -w "$DEST" ]; then
+          #    SUDO="sudo"
+          #fi
+          echo "Installing llama.cpp to $DEST (using $SUDO)..."
           $SUDO mkdir -p $DEST/bin $DEST/lib $DEST/include
           $SUDO cp -avP bin/* $DEST/bin/
           $SUDO cp -avP lib/* $DEST/lib/
