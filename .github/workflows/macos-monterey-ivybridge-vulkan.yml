@@ -103,19 +103,8 @@ jobs:
 
       - name: Prepare artifacts
         run: |
-          mkdir -p artifact/bin
-          # Copy executables from build/bin, preserving symlinks
-          if [ -d "build/bin" ]; then
-            cp -avP build/bin/* artifact/bin/
-            rm -f artifact/bin/*.dylib
-          fi
-
-          mkdir -p artifact/lib
-          # Copy static libraries
-          find build/ -name "*.a" -exec cp -avP {} artifact/lib/ \;
-
-          # Copy shared libraries if any, preserving symlinks
-          find build/ -name "*.dylib" -exec cp -avP {} artifact/lib/ \;
+          # Use CMake's built-in install logic to create a proper distribution layout
+          cmake --install build --prefix artifact
 
       - name: Create Tarball
         run: |
